@@ -91,6 +91,8 @@ export class EditorComponent implements OnInit, AfterViewInit, OnDestroy {
     imagefile: string;
     ctrlInitParams: any;
     gridOn = false;
+    snapStep: number | null = 10;
+    readonly snapStepOptions: (number | null)[] = [null, 5, 10, 20, 50, 100];
     isAnySelected = false;
     selectedElement: SelElement = new SelElement();
     panelsState: PanelsStateType = {
@@ -125,6 +127,8 @@ export class EditorComponent implements OnInit, AfterViewInit, OnDestroy {
     private destroy$ = new Subject<void>();
     private onboardingWizardHandled = false;
     private onboardingWizardOpened = false;
+    private _editorMouseUpHandler: ((ev: MouseEvent) => void) | null = null;
+    private _editorKeyDownHandler: ((ev: KeyboardEvent) => void) | null = null;
 
     constructor(private projectService: ProjectService,
         private winRef: WindowRef,
@@ -214,6 +218,14 @@ export class EditorComponent implements OnInit, AfterViewInit, OnDestroy {
         this.onSaveProject();
         this.destroy$.next(null);
         this.destroy$.complete();
+        try {
+            if (this._editorMouseUpHandler) {
+                document.removeEventListener('mouseup', this._editorMouseUpHandler as any);
+            }
+            if (this._editorKeyDownHandler) {
+                document.removeEventListener('keydown', this._editorKeyDownHandler as any, true);
+            }
+        } catch (e) { }
     }
     //#endregion
 
@@ -282,7 +294,41 @@ export class EditorComponent implements OnInit, AfterViewInit, OnDestroy {
             );
 
             this.winRef.nativeWindow.svgEditor.init();
+            // disable native gridSnapping so arrow keys behave normally (1px); snap is handled by Angular
+            const _cfg = this.winRef.nativeWindow.svgEditor?.curConfig;
+            if (_cfg) { _cfg.gridSnapping = false; _cfg.snappingStep = this.snapStep; }
+            this.gridOn = !!_cfg?.showGrid;
             $(initContextmenu);
+
+            // snap on mouseup when shift is held during drag
+            this._editorMouseUpHandler = (ev: MouseEvent) => {
+                try {
+                    if (ev.shiftKey) return;
+                    this.applySnapToSelection();
+                } catch (e) { }
+            };
+            document.addEventListener('mouseup', this._editorMouseUpHandler as any);
+
+            // intercept all arrow keys: 2px fixed move, shift+arrow = snapStep
+            this._editorKeyDownHandler = (ev: KeyboardEvent) => {
+                if (!['ArrowUp', 'ArrowDown', 'ArrowLeft', 'ArrowRight'].includes(ev.key)) return;
+                const canvas = this.winRef.nativeWindow.svgEditor?.canvas;
+                if (!canvas || typeof canvas.moveSelectedElements !== 'function') return;
+                const eles = this.winRef.nativeWindow.svgEditor?.getSelectedElements?.() || [];
+                if (!eles.length || !eles[0]) return;
+                ev.stopImmediatePropagation();
+                ev.preventDefault();
+                // shift = fine 2px move; no shift = snap step (or 2px in free mode)
+                const step = ev.shiftKey ? 2 : (this.snapStep ?? 2);
+                let dx = 0, dy = 0;
+                if (ev.key === 'ArrowLeft') dx = -step;
+                else if (ev.key === 'ArrowRight') dx = step;
+                else if (ev.key === 'ArrowUp') dy = -step;
+                else if (ev.key === 'ArrowDown') dy = step;
+                canvas.moveSelectedElements([dx], [dy], true);
+                if (!ev.shiftKey) this.applySnapToSelection();
+            };
+            document.addEventListener('keydown', this._editorKeyDownHandler as any, true);
 
         } catch (err) {
             console.error(err);
@@ -392,6 +438,42 @@ export class EditorComponent implements OnInit, AfterViewInit, OnDestroy {
             return this.currentView.svgcontent;
         }
         return this.winRef.nativeWindow.svgEditor.getSvgString();
+    }
+
+    private applySnapToSelection() {
+        try {
+            const svgEditor = this.winRef.nativeWindow.svgEditor;
+            if (!svgEditor) return;
+            const step = this.snapStep;
+            if (!step) return;
+            const canvas = svgEditor.canvas;
+            if (!canvas || typeof canvas.moveSelectedElements !== 'function') return;
+            const eles = svgEditor.getSelectedElements() || [];
+            const validEles = eles.filter((el: any) => el && typeof el.getBBox === 'function');
+            if (!validEles.length) return;
+            const dxs: number[] = [];
+            const dys: number[] = [];
+            let anyMove = false;
+            for (const el of validEles) {
+                try {
+                    // bbox.x/y is the real SVG position of the element
+                    const bbox = el.getBBox();
+                    const dx = Math.round(bbox.x / step) * step - bbox.x;
+                    const dy = Math.round(bbox.y / step) * step - bbox.y;
+                    dxs.push(dx);
+                    dys.push(dy);
+                    if (Math.abs(dx) > 0.5 || Math.abs(dy) > 0.5) anyMove = true;
+                } catch (e) {
+                    dxs.push(0);
+                    dys.push(0);
+                }
+            }
+            if (!anyMove) return;
+            // Array mode: values are used as SVG user-space units directly (no zoom division)
+            canvas.moveSelectedElements(dxs, dys, true);
+        } catch (e) {
+            console.error('applySnapToSelection error', e);
+        }
     }
 
     /**
@@ -842,9 +924,13 @@ export class EditorComponent implements OnInit, AfterViewInit, OnDestroy {
      * show grid in canvas
      */
     onShowGrid() {
-        this.gridOn = this.gridOn = !this.gridOn;
-        this.winRef.nativeWindow.svgEditor.clickExtension('view_grid');
-        this.winRef.nativeWindow.svgEditor.enableGridSnapping(this.gridOn);
+        this.gridOn = !this.gridOn;
+        const svgEditor = this.winRef.nativeWindow.svgEditor;
+        svgEditor.clickExtension('view_grid');
+    }
+
+    onSetSnapStep(step: number | null) {
+        this.snapStep = step;
     }
 
     /**
