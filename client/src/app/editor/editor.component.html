@@ -692,16 +692,6 @@
                                 <mat-icon aria-label="Show Hide Grid" *ngIf="!gridOn">grid_on</mat-icon>
                                 <mat-icon aria-label="Show Hide Grid" *ngIf="gridOn">grid_off</mat-icon>
                             </button>
-                            <button mat-button class="main-btn" style="font-size:11px;min-width:40px;padding:0 4px" [matMenuTriggerFor]="snapMenu" [matTooltip]="'editor.tools-snap-title' | translate">
-                                {{snapStep ? snapStep + 'px' : ('editor.tools-snap-free' | translate)}}
-                            </button>
-                            <mat-menu #snapMenu="matMenu">
-                                <button mat-menu-item *ngFor="let s of snapStepOptions" (click)="onSetSnapStep(s)">
-                                    <mat-icon *ngIf="snapStep === s">check</mat-icon>
-                                    <mat-icon *ngIf="snapStep !== s">space_bar</mat-icon>
-                                    {{s ? s + ' px' : ('editor.tools-snap-free' | translate)}}
-                                </button>
-                            </mat-menu>
                             <div id="history_panel">
                                 <button mat-button id="tool_undo" matTooltip="{{'editor.tools-undo-title' | translate}}" class="main-btn">
                                     <mat-icon aria-label="Undo [Z]">undo</mat-icon>
