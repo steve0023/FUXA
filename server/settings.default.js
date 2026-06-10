@@ -4,7 +4,7 @@ module.exports = {
     version: 1.4,
 
     // Standard language (editor)
-    language: 'en',
+    language: 'fr',
 
     // Hide the editor onboarding wizard when entering editor mode
     hideEditorOnboarding: false,
@@ -63,7 +63,7 @@ module.exports = {
     // Load HMI views on demand in the frontend.
     // if false the whole project, including every view, is sent at startup
     // if true the startup project contains only view metadata and views are loaded when opened
-    lazyViewLoading: false,
+    lazyViewLoading: true,
 
     // By default, server accepts connections on all IPv4 interfaces.
     // To listen on all IPv6 addresses, set uiHost to "::",

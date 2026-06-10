@@ -10,7 +10,7 @@ RUN npm run build -- --configuration production
 FROM node:18-bookworm AS server-builder
 # Define build arguments with defaults
 ARG NODE_SNAP=false
-ARG INSTALL_ODBC=true
+ARG INSTALL_ODBC=false
 
 WORKDIR /usr/src/app/FUXA
 
@@ -48,7 +48,7 @@ RUN npm run build
 
 # --- STAGE 3: Runner ---
 FROM node:18-bookworm-slim
-ARG INSTALL_ODBC=true
+ARG INSTALL_ODBC=false
 WORKDIR /usr/src/app/FUXA
 
 # Install ONLY runtime libraries
