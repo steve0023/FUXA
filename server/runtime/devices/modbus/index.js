@@ -24,6 +24,7 @@ function MODBUSclient(_data, _logger, _events, _runtime) {
     var mixItemsMap = {};               // Map the fragmented Signale { key = start address, value = MemoryItems }
     var overloading = 0;                // Overloading counter to mange the break connection
     var lastTimestampValue;             // Last Timestamp of asked values
+    var staleTimeout = 10000;           // Time without valid read before the Tags values are cleared
     var type;
     var runtime = _runtime;             // Access runtime config such as scripts
 
@@ -145,22 +146,31 @@ function MODBUSclient(_data, _logger, _events, _runtime) {
     this._polling = async function () {
         if (_checkWorking(true)) {
             var readVarsfnc = [];
+            var readBlocks = 0, readErrors = 0, staleBlocks = 0;
             if (!data.property.options) {
                 for (var memaddr in memory) {
                     var tokenizedAddress = parseAddress(memaddr);
+                    readBlocks++;
                     try {
                         readVarsfnc.push(await _readMemory(parseInt(tokenizedAddress.address), memory[memaddr].Start, memory[memaddr].MaxSize, Object.values(memory[memaddr].Items)));
+                        memory[memaddr].lastRead = Date.now();
                         readVarsfnc.push(await delay(data.property.delay || 10));
                     } catch (err) {
+                        readErrors++;
+                        staleBlocks += _invalidateIfStale(memory[memaddr]);
                         logger.error(`'${data.name}' _readMemory error! ${err}`);
                     }
                 }
             } else {
                 for (var memaddr in mixItemsMap) {
+                    readBlocks++;
                     try {
                         readVarsfnc.push(await _readMemory(getMemoryAddress(parseInt(memaddr), false), mixItemsMap[memaddr].Start, mixItemsMap[memaddr].MaxSize, Object.values(mixItemsMap[memaddr].Items)));
+                        mixItemsMap[memaddr].lastRead = Date.now();
                         readVarsfnc.push(await delay(data.property.delay || 10));
                     } catch (err) {
+                        readErrors++;
+                        staleBlocks += _invalidateIfStale(mixItemsMap[memaddr]);
                         logger.error(`'${data.name}' _readMemory error! ${err}`);
                     }
                 }
@@ -170,6 +180,19 @@ function MODBUSclient(_data, _logger, _events, _runtime) {
                 const result = await Promise.all(readVarsfnc);
 
                 _checkWorking(false);
+                if (readBlocks && readErrors === readBlocks) {
+                    if (staleBlocks === readBlocks) {
+                        // no valid read since staleTimeout: the device is not responding, never keep showing the last values
+                        _clearVarsValue();
+                        if (lastStatus !== 'connect-error') {
+                            logger.warn(`'${data.name}' no valid read since ${staleTimeout}ms, values cleared!`);
+                            _emitStatus('connect-error');
+                        }
+                    } else if (staleBlocks) {
+                        _emitValues(varsValue);
+                    }
+                    return;
+                }
                 if (result.length) {
                     let varsValueChanged = await _updateVarsValue(result);
                     lastTimestampValue = new Date().getTime();
@@ -205,6 +228,7 @@ function MODBUSclient(_data, _logger, _events, _runtime) {
      */
     this.load = function (_data) {
         data = JSON.parse(JSON.stringify(_data));
+        staleTimeout = parseInt(data.property && data.property.staleTimeout) || Math.max(10000, (parseInt(data.polling) || 1000) * 3);
         memory = {};
         varsValue = [];
         // memItemsMap = {};
@@ -680,6 +704,35 @@ function MODBUSclient(_data, _logger, _events, _runtime) {
             memItemsMap[id].value = null;
         }
         _emitValues(varsValue);
+    }
+
+    /**
+     * Clear the values of the Tags in the memory block that failed to read,
+     * only once it has no valid read since staleTimeout (keep the last values on short glitches)
+     * @param {*} block - MemoryItems
+     * @returns 1 if cleared (stale), 0 if still in grace time
+     */
+    var _invalidateIfStale = function (block) {
+        if (block.lastRead && Date.now() - block.lastRead < staleTimeout) {
+            return 0;
+        }
+        _invalidateItems(Object.values(block.Items));
+        return 1;
+    }
+
+    /**
+     * Clear the values of the Tags in the memory items
+     * @param {*} items
+     */
+    var _invalidateItems = function (items) {
+        items.forEach(item => {
+            item.rawValue = null;
+            (item.Tags || [item]).forEach(tag => {
+                if (varsValue[tag.id]) {
+                    varsValue[tag.id].value = null;
+                }
+            });
+        });
     }
 
     /**
